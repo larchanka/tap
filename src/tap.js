@@ -1,66 +1,100 @@
-var _eventName = 'tap';
+    Tap.options = {
+        eventName: 'tap',
+        fingerMaxOffset: 11
+    };
 
-Tap.trigger = function(e) {
-    var event = e,
-        element = e.target;
+    var attachDeviceEvent, init, handlers, deviceEvents,
+        coords = {};
 
-    if (document.createEvent) {
-        event = document.createEvent("HTMLEvents");
-        event.initEvent(_eventName, true, true);
-    } else {
-        event = document.createEventObject();
-        event.eventType = _eventName;
-    }
+    attachDeviceEvent = function(eventName) {
+        return utils.attachEvent(document.documentElement, deviceEvents[eventName], handlers[eventName]);
+    };
 
-    event.eventName = _eventName;
-
-    if (document.createEvent) {
-        element.dispatchEvent(event);
-    } else {
-        element.fireEvent("on" + event.eventType, event);
-    }
-};
-
-Tap.handlers = function() {
-    return {
+    handlers = {
         start: function(e) {
-            var _event = e.originalEvent && e.originalEvent.touches && e.originalEvent.touches.length ? e.originalEvent.touches[0] : e;
+            e = utils.getRealEvent(e);
 
-            eventsCoordinates.start = eventsCoordinates.move = [
-                _event.pageX,
-                _event.pageY
-            ];
-            eventsCoordinates.offset = [0, 0];
+            coords.start = [e.pageX, e.pageY];
+            coords.offset = [0, 0];
         },
 
         move: function(e) {
+            if (!coords.start && !coords.move) {
+                return false;
+            }
 
-            var _event = e.originalEvent && e.originalEvent.touches && e.originalEvent.touches.length ? e.originalEvent.touches[0] : e;
+            e = utils.getRealEvent(e);
 
-            eventsCoordinates.move = [
-                _event.pageX,
-                _event.pageY
-            ];
-            eventsCoordinates.offset = [
-                Math.abs(eventsCoordinates.move[0] - eventsCoordinates.start[0]),
-                Math.abs(eventsCoordinates.move[1] - eventsCoordinates.start[1]),
+            coords.move = [e.pageX, e.pageY];
+            coords.offset = [
+                Math.abs(coords.move[0] - coords.start[0]),
+                Math.abs(coords.move[1] - coords.start[1])
             ];
         },
 
-        end: function() {
+        end: function(e) {
+            e = utils.getRealEvent(e);
 
-            if (eventsCoordinates.offset[0] <= eventsCoordinates.maxOffset && eventsCoordinates.offset[1] <= eventsCoordinates.maxOffset)
-                Tap.trigger.apply(Tap, arguments);
+            if (coords.offset[0] < Tap.options.fingerMaxOffset && coords.offset[1] < Tap.options.fingerMaxOffset && !utils.fireFakeEvent(e, Tap.options.eventName)) {
+                // Windows Phone 8.0 trigger `click` after `pointerup` firing
+                // #16 https://github.com/pukhalski/tap/issues/16
+                if (window.navigator.msPointerEnabled || window.navigator.pointerEnabled) {
+                    var preventDefault = function(clickEvent) {
+                        clickEvent.preventDefault();
+                        e.target.removeEventListener('click', preventDefault);
+                    };
+
+                    e.target.addEventListener('click', preventDefault, false);
+                }
+
+                e.preventDefault();
+            }
+
+            coords = {};
+        },
+
+        click: function(e) {
+            if (!utils.fireFakeEvent(e, Tap.options.eventName)) {
+                return e.preventDefault();
+            }
+        },
+
+        emulatedTap: function( e ) {
+            if ( coords.offset ) {
+                utils.fireFakeEvent( e, Tap.options.eventName );
+            }
+
+            return e.preventDefault();
         }
     };
-}();
 
-Tap.init = function() {
-    Tap.device.eventsMatrix = Tap.device.findEventsMatrix();
+    init = function() {
+        var i = 0;
 
-    attachEvent(Tap.device.eventsMatrix['events']['start'], Tap.handlers["start"], document.body);
-    attachEvent(Tap.device.eventsMatrix['events']['move'], Tap.handlers["move"], document.body);
-    attachEvent(Tap.device.eventsMatrix['events']['end'], Tap.handlers["end"], document.body);
-};
+        for (; i < eventMatrix.length; i++) {
+            if (eventMatrix[i].test) {
+                deviceEvents = eventMatrix[i].events;
 
-attachEvent('load', Tap.init);
+                attachDeviceEvent('start');
+                attachDeviceEvent('move');
+                attachDeviceEvent('end');
+                utils.attachEvent(document.documentElement, 'click', handlers['emulatedTap']);
+
+                return false;
+            }
+        }
+
+        return utils.attachEvent(document.documentElement, 'click', handlers.click);
+    };
+
+    utils.attachEvent(window, 'load', init);
+
+    if (typeof define === 'function' && define.amd) {
+        define(function() {
+            init();
+
+            return Tap;
+        });
+    } else {
+        window.Tap = Tap;
+    }
